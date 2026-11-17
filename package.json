@@ -4,10 +4,11 @@
   "description": "Canlı dünya ve Orta Doğu durum ekranı: çok dilli haber akışı, harita, sirenler, askeri ADS-B, piyasalar, canlı TV. Sıfır bağımlılık.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.5.0"
   },
   "license": "MIT"
 }

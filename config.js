@@ -9,6 +9,18 @@
  *           "tr"    → Türkiye kaynakları
  */
 
+// .env dosyasını (varsa) yükle — bağımlılıksız basit ayrıştırıcı
+try {
+  const envText = require("node:fs").readFileSync(require("node:path").join(__dirname, ".env"), "utf8");
+  for (const line of envText.split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+  }
+} catch (_) {}
+
+// Şehir kutusu: merkez ± yarı genişlik (derece). TomTom kutu başına en fazla 10.000 km² kabul eder.
+const box = (lat, lon, dLat = 0.14, dLon = 0.17) => [lon - dLon, lat - dLat, lon + dLon, lat + dLat];
+
 const gnews = (q, hl, gl, ceid) =>
   `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=${hl}&gl=${gl}&ceid=${encodeURIComponent(ceid)}`;
 
@@ -24,6 +36,73 @@ module.exports = {
     quakes: 300,
     sirens: 5,
     sirenHistory: 90
+  },
+
+  // ---------------- Anomali kapsamı ----------------
+  // Anomali tespiti (trafik, hava, deniz) yalnızca aşağıdaki İsrail, İran ve Körfez bölgelerinde yapılır.
+  // Haritadaki diğer veriler (Türkiye dahil: askeri uçaklar, depremler, haberler) gösterilmeye devam eder,
+  // ama onlar için baz çizgisi tutulmaz ve anomali üretilmez.
+
+  // ---------------- Hava trafiği (adsb.fi, anahtarsız) ----------------
+  // Yarıçap deniz mili (en fazla 250). Her bölgenin uçak sayısı sampleSec'te bir SQLite'a yazılır.
+  air: {
+    pollSec: 60, // 7 bölge + askeri sorgu sırayla, 1,1 sn arayla (adsb.fi: saniyede en fazla 1 istek)
+    sampleSec: 300,
+    // Bölge ülkelerinde tescilli uçakları dünya genelinde bulma (OpenSky anonim kotası: ~100 sorgu/gün)
+    nationalPollSec: 900,
+    zones: [
+      { id: "israel", name: "İsrail hava sahası", lat: 31.6, lon: 34.9, nm: 140, tz: "Asia/Jerusalem" },
+      { id: "iran_n", name: "İran (kuzey / Tahran)", lat: 35.6, lon: 51.4, nm: 250, tz: "Asia/Tehran" },
+      { id: "iran_s", name: "İran (güney / İsfahan–Şiraz)", lat: 30.8, lon: 53.5, nm: 250, tz: "Asia/Tehran" },
+      { id: "iran_e", name: "İran (doğu / Meşhed)", lat: 33.5, lon: 59.0, nm: 250, tz: "Asia/Tehran" },
+      { id: "gulf_w", name: "Körfez batı (Kuveyt–Bahreyn–Katar)", lat: 26.6, lon: 50.4, nm: 250, tz: "Asia/Riyadh" },
+      { id: "gulf_e", name: "Körfez doğu (BAE–Umman)", lat: 24.6, lon: 56.0, nm: 250, tz: "Asia/Dubai" },
+      { id: "saudi", name: "Suudi Arabistan (Riyad–Cidde)", lat: 23.5, lon: 43.5, nm: 250, tz: "Asia/Riyadh" }
+    ]
+  },
+
+  // ---------------- Deniz trafiği (aisstream.io, ücretsiz anahtar) ----------------
+  // .env içine AISSTREAM_KEY=... (https://aisstream.io → GitHub ile giriş → API key)
+  marine: {
+    apiKey: process.env.AISSTREAM_KEY || "",
+    sampleSec: 300,
+    staleMin: 30, // bu kadar dakikadır konum göndermeyen gemi haritadan düşer
+    // [[güney, batı], [kuzey, doğu]]
+    zones: [
+      { id: "east_med", name: "Doğu Akdeniz (İsrail kıyısı)", bbox: [[31.2, 33.6], [33.3, 35.2]], tz: "Asia/Jerusalem" },
+      { id: "aqaba", name: "Akabe Körfezi (Eilat)", bbox: [[27.9, 34.2], [29.6, 35.1]], tz: "Asia/Jerusalem" },
+      { id: "red_sea", name: "Kızıldeniz", bbox: [[12.4, 32.5], [27.9, 43.6]], tz: "Asia/Riyadh" },
+      { id: "gulf", name: "Basra Körfezi", bbox: [[23.8, 47.6], [30.5, 55.4]], tz: "Asia/Dubai" },
+      { id: "hormuz", name: "Hürmüz Boğazı", bbox: [[25.4, 55.4], [27.3, 57.3]], tz: "Asia/Dubai" },
+      { id: "oman_gulf", name: "Umman Körfezi", bbox: [[22.4, 57.3], [25.7, 61.8]], tz: "Asia/Muscat" }
+    ]
+  },
+
+  // ---------------- Trafik analizi ----------------
+  // Kaynak: TomTom Traffic Incidents API (ücretsiz anahtar: developer.tomtom.com → .env içine TOMTOM_KEY=...)
+  // Her şehir için tek çağrı; 8 şehir × 15 dk aralık ≈ 770 istek/gün (ücretsiz kota 2.500).
+  traffic: {
+    apiKey: process.env.TOMTOM_KEY || "",
+    intervalSec: Number(process.env.TRAFFIC_INTERVAL_SEC) || 900,
+    // Anomali kuralı: aynı saat dilimindeki (hafta içi/sonu ayrı) geçmiş ölçümlere göre robust Z-skoru
+    minBaselineSamples: 8, // baz çizgisi bu kadar örnekten önce "oluşuyor" sayılır
+    baselineDays: 28,
+    openZ: 3.0, // anomali başlar
+    closeZ: 1.5, // anomali biter
+    // Not: TomTom'un İsrail ve İran için yol/trafik verisi yok (API "Point too far from nearest existing segment"
+    // döndürüyor, olay listesi hep boş). Bu yüzden şehir trafiği yalnızca Körfez'de ölçülür; İsrail ve İran
+    // hava/deniz trafiği ve haberlerle izlenir. Başka bir trafik kaynağı bulunursa buraya eklenebilir.
+    cities: [
+      // Körfez
+      { id: "riyadh", name: "Riyad", lat: 24.71, lon: 46.68, bbox: box(24.71, 46.68, 0.18, 0.2), tz: "Asia/Riyadh" },
+      { id: "jeddah", name: "Cidde", lat: 21.54, lon: 39.17, bbox: box(21.54, 39.17, 0.15, 0.12), tz: "Asia/Riyadh" },
+      { id: "dubai", name: "Dubai", lat: 25.15, lon: 55.25, bbox: box(25.15, 55.25, 0.15, 0.2), tz: "Asia/Dubai" },
+      { id: "abudhabi", name: "Abu Dabi", lat: 24.45, lon: 54.45, bbox: box(24.45, 54.45, 0.12, 0.18), tz: "Asia/Dubai" },
+      { id: "doha", name: "Doha", lat: 25.29, lon: 51.50, bbox: box(25.29, 51.50, 0.12, 0.12), tz: "Asia/Qatar" },
+      { id: "kuwait", place: "kw", name: "Kuveyt", lat: 29.33, lon: 47.98, bbox: box(29.33, 47.98, 0.12, 0.15), tz: "Asia/Kuwait" },
+      { id: "manama", name: "Manama", lat: 26.21, lon: 50.57, bbox: box(26.21, 50.57, 0.08, 0.08), tz: "Asia/Bahrain" },
+      { id: "muscat", name: "Maskat", lat: 23.59, lon: 58.40, bbox: box(23.59, 58.40, 0.1, 0.2), tz: "Asia/Muscat" }
+    ]
   },
 
   // Haberler kaç saat hafızada tutulsun
@@ -95,7 +174,7 @@ module.exports = {
     { symbol: "BTC-USD", name: "BTC", unit: "$" }
   ],
 
-  // Askeri uçak filtresi (adsb.lol /v2/mil) — Orta Doğu + Doğu Akdeniz kutusu
+  // Askeri uçak filtresi (adsb.fi /v2/mil) — Orta Doğu + Doğu Akdeniz kutusu
   aircraftBox: { latMin: 10, latMax: 43, lonMin: 24, lonMax: 64 },
 
   // Deprem filtresi (USGS) — aynı kutu, M2.5+

@@ -1,13 +1,22 @@
 const { fetchJson, mapLimit } = require("../net");
+const { countryFromHex } = require("../countries");
 
 const inBox = (lat, lon, b) => lat >= b.latMin && lat <= b.latMax && lon >= b.lonMin && lon <= b.lonMax;
 
-/** Askeri uçaklar — adsb.lol (açık, anahtarsız, topluluk ADS-B ağı) */
+/**
+ * Askeri uçaklar — adsb.fi (açık, anahtarsız, topluluk ADS-B ağı).
+ * Kutu içindekiler + dünyanın neresinde olursa olsun bölge ülkelerinde tescilli askeri uçaklar.
+ */
 async function fetchMilitaryAircraft(box) {
-  const data = await fetchJson("https://api.adsb.lol/v2/mil", { timeoutMs: 15000 });
-  return (data.ac || [])
-    .filter((a) => Number.isFinite(a.lat) && Number.isFinite(a.lon) && inBox(a.lat, a.lon, box))
+  const { adsbGet, API } = require("./air");
+  const data = await adsbGet(`${API}/mil`);
+  return (data.ac || data.aircraft || [])
+    .filter((a) => Number.isFinite(a.lat) && Number.isFinite(a.lon) && (inBox(a.lat, a.lon, box) || countryFromHex(a.hex)))
     .map((a) => ({
+      country: countryFromHex(a.hex),
+      military: true,
+      seenAt: Date.now() - (a.seen || 0) * 1000,
+      source: "adsb.fi",
       hex: a.hex,
       callsign: (a.flight || "").trim() || null,
       reg: a.r || null,

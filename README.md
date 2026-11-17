@@ -2,11 +2,60 @@
 
 Yan ekranda sürekli açık durmak için tasarlanmış, **canlı dünya ve Orta Doğu durum ekranı**.
 Tek pencerede: çok dilli haber akışı (otomatik Türkçe çeviri), haber yoğunluk haritası, İsrail siren uyarıları,
-bölgedeki askeri uçaklar (ADS-B), depremler, piyasalar ve canlı haber kanalı.
+hava ve deniz trafiği, depremler, piyasalar, canlı haber kanalı ve **İsrail, İran ve Körfez ülkeleri için
+trafik / hava / deniz anomali analizi**.
 
-- **Sıfır bağımlılık:** `npm install` yok; yalnızca Node.js 18+.
-- **API anahtarı yok:** tüm kaynaklar herkese açık.
+- **Sıfır bağımlılık:** `npm install` yok; yalnızca Node.js 22.5+ (yerleşik `node:sqlite` ve `WebSocket` için).
+- **Anahtarlar:** haber, hava trafiği, siren, deprem ve piyasa verileri anahtarsız. Şehir trafiği için ücretsiz bir
+  TomTom, gemi trafiği için ücretsiz bir aisstream.io anahtarı gerekir (`.env`).
 - **Simülasyon yok:** ekrandaki her veri gerçek bir kaynaktan gelir; bir kaynak düşerse alt satırda kırmızı görünür.
+- **Anomali kapsamı:** baz çizgisi ve anomali tespiti yalnızca İsrail, İran ve Körfez bölgelerinde yapılır.
+  Diğer veriler (Türkiye dahil) haritada gösterilir ama anomali üretmez.
+
+## Hava ve deniz trafiği
+
+- **Hava (adsb.fi, anahtarsız):** İsrail, İran (3 bölge), Körfez batı/doğu ve Suudi Arabistan bölgeleri dakikada bir
+  taranır; tüm uçaklar haritada (askeriler yeşil ve büyük). Bölge başına havadaki uçak ve askeri uçak sayısı 5 dakikada
+  bir SQLite'a yazılır. Hava sahası kapanması gibi durumlar **negatif anomali** (▼) olarak görünür.
+  *Kapsam notu:* İran üzerinde ADS-B alıcısı olmadığı için bu bölgeler "kapsam yok" gösterir ve anomali üretmez.
+- **Deniz (aisstream.io):** Doğu Akdeniz (İsrail kıyısı), Akabe Körfezi, Kızıldeniz, Basra Körfezi, Hürmüz ve Umman
+  Körfezi'ndeki AIS mesajları WebSocket ile canlı alınır. Gemiler tipine göre renklenir (tanker kırmızı, kargo mavi).
+  Bölge başına gemi, tanker ve seyirdeki gemi sayısı 5 dakikada bir kaydedilir. Bağlantı 30 dakika açık kalmadan
+  sayım kaydedilmez (eksik sayım sahte "boşalma" anomalisi üretmesin diye).
+- Başarısız bir sorgu asla 0 olarak kaydedilmez; o turda o bölge atlanır.
+- **Bölge ülkeleri her zaman haritada:** İsrail, İran, Suudi Arabistan, BAE, Katar, Kuveyt, Bahreyn ve Umman'da
+  tescilli uçaklar (ICAO adres bloğuna göre) ve bu ülkelerin bayrağını taşıyan gemiler (MMSI'nin ülke koduna göre)
+  dünyanın neresinde olursa olsun gösterilir; ülke rengi ve bayrağıyla ayrı bir katmanda ("Bölge ülkeleri").
+  Uçaklar 15 dakikada bir **OpenSky**'den dünya genelinde bulunur (anonim kota), konumları 3 dakikada bir adsb.fi'den
+  güncellenir; 3 dakikadan eski konumlar soluk çizilir. *Not:* tescil ve bayrak ülkesi, işletmeciyle aynı olmayabilir
+  (kiralık uçak, kolaylık bayrağı). İran tescilli uçaklar ADS-B ağlarında neredeyse hiç görünmez.
+- **Kalkış ve varış meydanı:** çağrı koduna göre **adsbdb.com**'dan alınır ve SQLite'ta 24 saat önbelleğe alınır.
+  Bu *tarifeli* rotadır; uçağın konumu rotaya uymuyorsa "doğrulanamadı" yazar. Uçağa tıklayınca kalkış → uçak → varış
+  çizgisi ve meydan adları haritaya çizilir. Gemilerde varış yeri, geminin AIS ile kendi bildirdiği hedeftir.
+
+## Trafik analizi
+
+Körfez şehirleri (Riyad, Cidde, Dubai, Abu Dabi, Doha, Kuveyt, Manama, Maskat) 15 dakikada bir
+**TomTom Traffic Incidents API**'sinden yoklanır. *TomTom'un İsrail ve İran için yol verisi yok*; bu iki ülke şehir
+trafiğinde ölçülemez, hava ve deniz trafiği ile izlenir. Her yoklamada şehir başına toplam sıkışıklık (km),
+toplam gecikme (dk), yol kapanması ve kaza sayısı `data/konjonktur.db` (SQLite) dosyasına yazılır.
+
+- **Baz çizgisi:** aynı şehrin *aynı yerel saat dilimindeki* (hafta içi / hafta sonu ayrı) son 28 günlük ölçümlerinin
+  medyanı ve MAD'ı. Aykırı değerlerden etkilenmez; sabah ve akşam iş çıkışı yoğunluğu doğal olarak "normal" sayılır.
+- **Anomali:** `z = (değer − medyan) / (1.4826 × MAD)`. |z| ≥ 3 olunca anomali açılır, |z| < 1.5 olunca kapanır.
+  Başlangıç, bitiş, tepe değeri ve normal değer `traffic_anomalies` tablosunda saklanır. Beklenenden *çok sakin*
+  trafik de (sokağa çıkma yasağı, grev, tatil) negatif anomali olarak yakalanır.
+- **Olaylar:** her kapanma, kaza ve ağır sıkışıklık ilk ve son görülme zamanıyla `traffic_incidents` tablosunda tutulur;
+  haritada çizgi olarak gösterilir. Bir şehre tıklayınca o şehirle eşleşen son haberler yanında listelenir.
+- **Dürüstlük kuralı:** bir saat dilimi için 8 ölçüm birikmeden z hesaplanmaz; panelde "baz 3/8" gibi görünür.
+  Yani anomali tespiti, ilk kurulumdan sonra birkaç gün içinde saat saat devreye girer.
+- **Kapsam:** TomTom kalıcı yol çalışmalarını da "kapanma" sayar (ör. Riyad'da yüzlerce). Bu yüzden ham sayılara değil,
+  aynı saatteki normal değere göre sapmaya bakılır.
+
+Kurulum: `developer.tomtom.com` adresinden ücretsiz anahtar al, `.env.example` dosyasını `.env` olarak kopyala
+ve `TOMTOM_KEY=` satırını doldur. Anahtarsız çalışırken trafik sekmesi bu talimatı gösterir.
+
+Testler: `npm test` (anomali motoru için birim testleri, Node'un yerleşik test koşucusu).
 
 ## Çalıştırma
 
@@ -42,7 +91,7 @@ Bu kanallar doğrulanmamış, hızlı ve bazıları taraflı akışlardır. Bu y
 
 ### Canlı veri servisleri
 - **İsrail sirenleri:** [Tzeva Adom](https://www.tzevaadom.co.il) (aktif uyarılar 5 saniyede bir, geçmiş 90 saniyede bir)
-- **Askeri uçaklar:** [adsb.lol](https://adsb.lol) `/v2/mil`. Yalnızca transponder yayını yapan uçaklar görünür; bölgedeki askeri trafiğin çoğu görünmez.
+- **Askeri uçaklar:** [adsb.fi](https://adsb.fi) `/v2/mil`. Yalnızca transponder yayını yapan uçaklar görünür; bölgedeki askeri trafiğin çoğu görünmez.
 - **Depremler:** [USGS](https://earthquake.usgs.gov) son 24 saat, M2.5+
 
 ## Önem derecesi nasıl belirleniyor?

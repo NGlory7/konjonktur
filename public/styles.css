@@ -280,3 +280,53 @@ select {
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #263040; border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- trafik ---------- */
+.badge { background: var(--sev3); color: #fff; border-radius: 8px; padding: 0 6px; font-size: 10px; margin-left: 4px; }
+.bar-ico { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
+.bar-ico.closure { background: #ff2d55; }
+.bar-ico.jam { background: #ffa94d; }
+.traffic-body { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 10px; padding: 8px; overflow: hidden; flex: 1; min-height: 0; }
+.traffic-cities { overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 2px; }
+.traffic-side { overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
+.tcity {
+  display: grid; grid-template-columns: 74px 58px minmax(0, 1fr) 62px; gap: 6px; align-items: center;
+  font-size: 12px; padding: 3px 4px; border-radius: 4px; cursor: pointer;
+}
+.tcity:hover { background: #141b25; }
+.tcity.sel { background: #1a2230; }
+.tcity .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tcity .val { font-variant-numeric: tabular-nums; text-align: right; }
+.tcity .val small { color: var(--muted); }
+.tcity svg { width: 100%; height: 20px; display: block; }
+.zb { font-size: 10px; border-radius: 4px; padding: 1px 5px; text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.zb.hi { background: #5c1a1f; color: #ffb3b8; }
+.zb.lo { background: #12324a; color: #9fd3ff; }
+.zb.ok { background: #1b2a20; color: #8fd4a6; }
+.zb.wait { background: #222a36; color: var(--muted); }
+.zb.err { background: #3a2a10; color: #ffcf7a; }
+.traffic-off { padding: 14px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.traffic-off code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; color: var(--text); }
+.news-mini { list-style: none; padding: 0; margin: 0; font-size: 11px; display: grid; gap: 3px; }
+.news-mini a { text-decoration: none; }
+.news-mini a:hover { text-decoration: underline; }
+.plane.civil { color: #9fb3c8; opacity: 0.85; }
+
+/* ---------- bölge ülkeleri (dünya geneli) ---------- */
+.nat-ac, .nat-ship { position: relative; color: var(--c); filter: drop-shadow(0 0 3px var(--c)); }
+.nat-ac svg.plane { color: var(--c) !important; }
+.nat-ac span, .nat-ship span { position: absolute; left: 12px; top: -7px; font-size: 10px; line-height: 1; filter: none; }
+.apt-label { background: #121821e6; border-color: #2b3646; font-size: 11px; }
+.nat-row { grid-template-columns: 110px 14px minmax(0, 1fr) 46px; }
+
+/* ---------- harita filtresi ---------- */
+.flt-ctl { background: #121821f2; border: 1px solid var(--line); border-radius: 6px; color: var(--text); font-size: 12px; max-width: 290px; }
+.flt-toggle { background: none; border: 0; padding: 5px 9px; cursor: pointer; color: var(--text); font-weight: 600; }
+.flt-toggle span { color: var(--accent); }
+.flt-body { padding: 4px 9px 9px; display: grid; gap: 6px; border-top: 1px solid var(--line); }
+.flt-row { display: grid; gap: 3px; }
+.flt-row b { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+.flt-ctl .seg button { padding: 2px 7px; font-size: 11px; }
+.flt-chips { display: flex; flex-wrap: wrap; gap: 3px; }
+.flt-chips button { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; cursor: pointer; font-size: 13px; opacity: 0.55; }
+.flt-chips button.on { opacity: 1; border-color: var(--accent); }

@@ -62,6 +62,9 @@
     quakes: [],
     markets: [],
     sirens: { active: [], history: [] },
+    traffic: null,
+    air: null,
+    marine: null,
     sources: {},
     tv: [],
     seen: new Set(),
@@ -107,7 +110,7 @@
     gulf: [[12, 42], [32, 60]],
     world: [[-50, -150], [70, 160]]
   };
-  const map = L.map("map", { zoomControl: true, worldCopyJump: true, attributionControl: true, minZoom: 2 });
+  const map = L.map("map", { zoomControl: true, worldCopyJump: true, attributionControl: true, minZoom: 2, preferCanvas: true });
   // Esri koyu gri altlık + etiket katmanı (anahtarsız)
   const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas";
   L.tileLayer(`${ESRI}/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`, {
@@ -129,14 +132,22 @@
     news: L.layerGroup().addTo(map),
     aircraft: L.layerGroup().addTo(map),
     quakes: L.layerGroup().addTo(map),
-    sirens: L.layerGroup().addTo(map)
+    sirens: L.layerGroup().addTo(map),
+    traffic: L.layerGroup().addTo(map),
+    vessels: L.layerGroup().addTo(map),
+    natAir: L.layerGroup(),
+    natSea: L.layerGroup()
   };
+  layers.national = L.layerGroup([layers.natAir, layers.natSea]).addTo(map);
   const layerCtl = L.control
     .layers(null, {
       "Haber yoğunluğu": layers.news,
-      "Askeri uçaklar": layers.aircraft,
+      "Hava trafiği": layers.aircraft,
+      "Gemi trafiği": layers.vessels,
+      "Bölge ülkeleri (dünya geneli)": layers.national,
       Depremler: layers.quakes,
-      "İsrail sirenleri": layers.sirens
+      "İsrail sirenleri": layers.sirens,
+      "Trafik olayları": layers.traffic
     }, { collapsed: true, position: "topright" })
     .addTo(map);
   const hiddenLayers = store.get("hiddenLayers", []);
@@ -218,26 +229,208 @@
     return L.divIcon({
       className: "",
       // Burnu kuzeye bakan uçak silueti, rotaya göre döndürülür
-      html: `<svg class="plane${a.emergency ? " emerg" : ""}" viewBox="0 0 24 24" width="16" height="16" style="transform:rotate(${rot}deg)"><path fill="currentColor" stroke="#000" stroke-width="0.6" d="M12 2c.8 0 1.3.9 1.3 2v5.2l7.7 4.6v2l-7.7-2.3v4.6l2.2 1.7V21L12 20l-3.5 1v-1.2l2.2-1.7v-4.6L3 15.8v-2l7.7-4.6V4c0-1.1.5-2 1.3-2z"/></svg>`,
+      html: `<svg class="plane${a.emergency ? " emerg" : a.military ? "" : " civil"}" viewBox="0 0 24 24" width="${a.military ? 16 : 12}" height="${a.military ? 16 : 12}" style="transform:rotate(${rot}deg)"><path fill="currentColor" stroke="#000" stroke-width="0.6" d="M12 2c.8 0 1.3.9 1.3 2v5.2l7.7 4.6v2l-7.7-2.3v4.6l2.2 1.7V21L12 20l-3.5 1v-1.2l2.2-1.7v-4.6L3 15.8v-2l7.7-4.6V4c0-1.1.5-2 1.3-2z"/></svg>`,
       iconSize: [16, 16],
       iconAnchor: [8, 8]
     });
   }
-  function renderAircraftLayer() {
-    layers.aircraft.clearLayers();
-    for (const a of state.aircraft) {
-      const label = [a.callsign, a.type, a.reg].filter(Boolean).join(" · ") || a.hex;
-      L.marker([a.lat, a.lon], { icon: planeIcon(a) })
-        .bindTooltip(
-          `<b>${esc(label)}</b><br>${a.onGround ? "yerde" : `${a.alt != null ? `${Number(a.alt).toLocaleString("tr-TR")} ft` : "irtifa ?"}`}${
-            a.speed != null ? ` · ${a.speed} kt` : ""
-          }${a.squawk ? ` · squawk ${esc(a.squawk)}` : ""}${a.emergency ? ` · <b style="color:#ff4d4f">ACİL: ${esc(a.emergency)}</b>` : ""}`,
-          { direction: "top" }
-        )
-        .on("click", () => window.open(`https://globe.adsb.lol/?icao=${encodeURIComponent(a.hex)}`, "_blank", "noopener"))
-        .addTo(layers.aircraft);
-    }
+  // ---------------- uçuş / gemi filtreleri ----------------
+  // air: all | national | military | off   ·   sea: all | national | tanker | off   ·   countries: [] = hepsi
+  const flt = Object.assign({ air: "all", sea: "all", hideGround: true, countries: [] }, store.get("filters", {}));
+  const countryOf = (code) => (state.countries || []).find((c) => c.code === code);
+
+  function passAir(a) {
+    if (flt.air === "off") return false;
+    if (flt.hideGround && a.onGround) return false;
+    if (flt.air === "national" && !a.country) return false;
+    if (flt.air === "military" && !a.military) return false;
+    if (flt.countries.length && !flt.countries.includes(a.country)) return false;
+    return true;
   }
+  function passSea(v) {
+    if (flt.sea === "off") return false;
+    if (flt.sea === "national" && !v.country) return false;
+    if (flt.sea === "tanker" && v.cls !== "tanker") return false;
+    if (flt.countries.length && !flt.countries.includes(v.country)) return false;
+    return true;
+  }
+
+  const FilterCtl = L.Control.extend({
+    options: { position: "topright" },
+    onAdd() {
+      const div = L.DomUtil.create("div", "flt-ctl");
+      L.DomEvent.disableClickPropagation(div);
+      L.DomEvent.disableScrollPropagation(div);
+      div.innerHTML = `<button class="flt-toggle" type="button" title="Haritadaki uçak ve gemileri filtrele">⚲ Filtre <span id="fltBadge"></span></button>
+        <div class="flt-body" hidden>
+          <div class="flt-row"><b>Uçuşlar</b><div class="seg" data-k="air">
+            <button data-v="all">Tümü</button><button data-v="national">Bölge ülkeleri</button><button data-v="military">Askeri</button><button data-v="off">Kapalı</button></div></div>
+          <div class="flt-row"><b>Gemiler</b><div class="seg" data-k="sea">
+            <button data-v="all">Tümü</button><button data-v="national">Bölge bayraklı</button><button data-v="tanker">Tanker</button><button data-v="off">Kapalı</button></div></div>
+          <div class="flt-row"><b>Ülke</b><div class="flt-chips" id="fltCountries"></div></div>
+          <label class="chk"><input type="checkbox" id="fltGround"> Yerdeki uçakları gizle</label>
+          <div class="muted small" id="fltInfo"></div>
+          <div class="muted small">Performans için yalnızca ekranda görünen alan çizilir.</div>
+        </div>`;
+      return div;
+    }
+  });
+  new FilterCtl().addTo(map);
+
+  function syncFilterUi() {
+    document.querySelectorAll(".flt-ctl .seg").forEach((seg) =>
+      seg.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === flt[seg.dataset.k]))
+    );
+    $("#fltGround").checked = flt.hideGround;
+    $("#fltCountries").innerHTML = (state.countries || [])
+      .map((c) => `<button type="button" data-c="${c.code}" class="${flt.countries.includes(c.code) ? "on" : ""}" title="${esc(c.name)}">${c.flag}</button>`)
+      .join("");
+    const active = flt.air !== "all" || flt.sea !== "all" || flt.countries.length || !flt.hideGround;
+    $("#fltBadge").textContent = active ? "●" : "";
+  }
+  const applyFilters = () => {
+    store.set("filters", flt);
+    syncFilterUi();
+    renderAircraftLayer();
+    renderVesselLayer();
+  };
+  document.querySelector(".flt-ctl").addEventListener("click", (e) => {
+    if (e.target.closest(".flt-toggle")) {
+      const body = document.querySelector(".flt-body");
+      body.hidden = !body.hidden;
+      return;
+    }
+    const b = e.target.closest(".seg button");
+    if (b) {
+      flt[b.closest(".seg").dataset.k] = b.dataset.v;
+      return applyFilters();
+    }
+    const c = e.target.closest("#fltCountries button");
+    if (c) {
+      const code = c.dataset.c;
+      flt.countries = flt.countries.includes(code) ? flt.countries.filter((x) => x !== code) : [...flt.countries, code];
+      applyFilters();
+    }
+  });
+  $("#fltGround").addEventListener("change", (e) => {
+    flt.hideGround = e.target.checked;
+    applyFilters();
+  });
+
+  // ---------------- uçaklar: artımlı güncelleme, yalnızca görünür alan ----------------
+  const apt = (p) => (p ? `${esc(p.iata || p.icao || "?")} ${esc(p.city || p.name || "")}` : "?");
+  const routeLayer = L.layerGroup().addTo(map);
+  let routeFor = null;
+  const counts = { air: [0, 0], sea: [0, 0] };
+
+  function routeText(a) {
+    const r = a.route;
+    if (!r) return a.callsign && !a.onGround ? `<span style="color:#7d8899">rota bilgisi aranıyor / yok</span>` : "";
+    return `<b>${apt(r.from)} → ${apt(r.to)}</b>${r.airline ? ` · ${esc(r.airline)}` : ""}${
+      r.plausible ? "" : `<br><span style="color:#ffb3b8">tarifeli rota — uçağın konumuyla uyuşmuyor, doğrulanamadı</span>`
+    }`;
+  }
+
+  function aircraftTooltip(a) {
+    const c = countryOf(a.country);
+    const label = [a.callsign, a.type, a.reg].filter(Boolean).join(" · ") || a.hex;
+    const alt = a.onGround ? "yerde" : a.alt != null ? `${Number(a.alt).toLocaleString("tr-TR")} ft` : "irtifa ?";
+    return `${c ? `${c.flag} <b>${esc(c.name)}</b> tescilli · ` : ""}${a.military ? "★ askeri · " : ""}<b>${esc(label)}</b><br>${routeText(a)}${
+      a.route || (a.callsign && !a.onGround) ? "<br>" : ""
+    }${alt}${a.speed != null ? ` · ${a.speed} kt` : ""}${a.squawk ? ` · squawk ${esc(a.squawk)}` : ""}${
+      a.emergency ? ` · <b style="color:#ff4d4f">ACİL: ${esc(a.emergency)}</b>` : ""
+    }${a.stale ? `<br><span style="color:#7d8899">son konum ${ago(a.seenAt)} önce (${esc(a.source)})</span>` : ""}<br><span style="color:#7d8899">${
+      a.route ? "tıkla: rotayı çiz · " : ""
+    }globe.adsb.fi/?icao=${esc(a.hex)}</span>`;
+  }
+
+  function drawRoute(a) {
+    routeLayer.clearLayers();
+    if (routeFor === a.hex || !a.route) {
+      routeFor = null; // ikinci tık ya da rotası bilinmeyen uçak: çizgiyi kaldır
+      return;
+    }
+    routeFor = a.hex;
+    const { from, to } = a.route;
+    const color = countryOf(a.country)?.color || "#e8b04b";
+    if (from?.lat != null) L.polyline([[from.lat, from.lon], [a.lat, a.lon]], { color, weight: 2, opacity: 0.9 }).addTo(routeLayer);
+    if (to?.lat != null) L.polyline([[a.lat, a.lon], [to.lat, to.lon]], { color, weight: 2, opacity: 0.8, dashArray: "6 6" }).addTo(routeLayer);
+    for (const [p, tag] of [[from, "kalkış"], [to, "varış"]]) {
+      if (p?.lat == null) continue;
+      L.circleMarker([p.lat, p.lon], { radius: 5, color, weight: 2, fillColor: "#0b0e13", fillOpacity: 1 })
+        .bindTooltip(`<b>${tag}:</b> ${esc(p.name || "")} (${esc(p.iata || p.icao || "")})<br>${esc(p.city || "")}, ${esc(p.country || "")}`, {
+          permanent: true,
+          direction: "top",
+          className: "apt-label"
+        })
+        .addTo(routeLayer);
+    }
+    const pts = [from, to].filter((p) => p?.lat != null).map((p) => [p.lat, p.lon]);
+    if (pts.length) map.flyToBounds(L.latLngBounds([...pts, [a.lat, a.lon]]).pad(0.2), { duration: 0.8 });
+  }
+
+  function acIcon(a, c) {
+    const base = planeIcon(a).options.html;
+    return c
+      ? L.divIcon({ className: "", html: `<div class="nat-ac" style="--c:${c.color}">${base}<span>${c.flag}</span></div>`, iconSize: [16, 16], iconAnchor: [8, 8] })
+      : planeIcon(a);
+  }
+
+  const acMarkers = new Map(); // hex -> { m, key, target }
+  function renderAircraftLayer() {
+    const view = map.getBounds().pad(0.3);
+    const keep = new Set();
+    let shown = 0;
+    for (const a of state.aircraft) {
+      if (!passAir(a) || !view.contains([a.lat, a.lon])) continue;
+      keep.add(a.hex);
+      shown++;
+      const c = countryOf(a.country);
+      const target = c ? layers.natAir : layers.aircraft;
+      // İkon yalnızca rota 15°'den fazla değişince ya da durum değişince yeniden kurulur
+      const key = `${Math.round((a.track ?? 0) / 15)}|${c ? c.code : ""}|${a.military ? 1 : 0}|${a.emergency ? 1 : 0}`;
+      let e = acMarkers.get(a.hex);
+      if (e && e.target !== target) {
+        e.m.remove();
+        e = null;
+      }
+      if (!e) {
+        const m = L.marker([a.lat, a.lon], { icon: acIcon(a, c), opacity: a.stale ? 0.55 : 1 });
+        m.bindTooltip(() => aircraftTooltip(m._ac), { direction: "top" }); // tembel: yalnızca üzerine gelince kurulur
+        m.on("click", () => drawRoute(m._ac));
+        m.addTo(target);
+        e = { m, key, target };
+        acMarkers.set(a.hex, e);
+      } else {
+        e.m.setLatLng([a.lat, a.lon]);
+        if (e.key !== key) {
+          e.m.setIcon(acIcon(a, c));
+          e.key = key;
+        }
+        e.m.setOpacity(a.stale ? 0.55 : 1);
+      }
+      e.m._ac = a;
+    }
+    for (const [hex, e] of acMarkers) {
+      if (!keep.has(hex)) {
+        e.m.remove();
+        acMarkers.delete(hex);
+      }
+    }
+    counts.air = [shown, state.aircraft.length];
+    updateFilterInfo();
+  }
+
+  function updateFilterInfo() {
+    const el = $("#fltInfo");
+    if (el) el.textContent = `Ekranda ✈ ${counts.air[0]} / ${counts.air[1]} · ⚓ ${counts.sea[0]} / ${counts.sea[1]}`;
+  }
+
+  // Harita kaydırılınca / yakınlaşınca yeni görünen alanı çiz
+  map.on("moveend", throttle(() => {
+    renderAircraftLayer();
+    renderVesselLayer();
+  }, 150));
 
   function renderQuakeLayer() {
     layers.quakes.clearLayers();
@@ -480,8 +673,9 @@
   }
 
   function renderAircraftList() {
-    $("#acCount").textContent = state.aircraft.length ? `(${state.aircraft.length})` : "";
-    const list = [...state.aircraft].sort((a, b) => (b.emergency ? 1 : 0) - (a.emergency ? 1 : 0) || (b.alt || 0) - (a.alt || 0));
+    const mil = state.aircraft.filter((a) => a.military);
+    $("#acCount").textContent = mil.length ? `(${mil.length} · toplam ${state.aircraft.length})` : "";
+    const list = [...mil].sort((a, b) => (b.emergency ? 1 : 0) - (a.emergency ? 1 : 0) || (b.alt || 0) - (a.alt || 0));
     $("#acList").innerHTML =
       list
         .slice(0, 10)
@@ -636,6 +830,333 @@
   }
   $("#tvSel").addEventListener("change", (e) => setTv(e.target.value));
 
+  // ---------------- trafik ----------------
+  const ptab = { cur: store.get("ptab", "pulse"), city: null };
+
+  function setPulseTab(t) {
+    ptab.cur = t;
+    store.set("ptab", t);
+    $$("#pulseTabs button").forEach((b) => b.classList.toggle("on", b.dataset.ptab === t));
+    $("#trafficBody").hidden = t !== "traffic";
+    $("#pulseBody").hidden = t !== "pulse";
+    $("#airseaBody").hidden = t !== "airsea";
+    if (t === "airsea") renderAirSea();
+    $("#pulseHint").textContent = t === "pulse" ? "son 6 saat · haber sayısı" : (t === "traffic" ? "TomTom · aynı saat dilimine göre robust Z-skoru" : "adsb.fi + aisstream · 5 dk'da bir kayıt");
+    if (t === "traffic") renderTraffic();
+  }
+  $$("#pulseTabs button").forEach((b) => b.addEventListener("click", () => setPulseTab(b.dataset.ptab)));
+
+  const dur = (ms) => {
+    const m = Math.max(0, Math.round(ms / 60000));
+    return m < 60 ? `${m} dk` : `${Math.floor(m / 60)} sa ${m % 60} dk`;
+  };
+
+  function zBadge(c) {
+    if (c.error && !c.latest) return `<span class="zb err" title="${esc(c.error)}">hata</span>`;
+    const e = c.evaluation;
+    if (!e) return `<span class="zb wait">veri yok</span>`;
+    if (!e.ready) return `<span class="zb wait" title="Bu saat dilimi için en az 8 geçmiş ölçüm gerekiyor">baz ${e.samples}/8</span>`;
+    const z = e.metrics.jam_km.z;
+    const cls = z >= 3 ? "hi" : z <= -3 ? "lo" : "ok";
+    return `<span class="zb ${cls}" title="Sıkışıklık Z-skoru (normal/medyan ${e.metrics.jam_km.median} km)">z ${z > 0 ? "+" : ""}${z.toFixed(1)}</span>`;
+  }
+
+  function trafficSpark(series) {
+    if (!series || series.length < 2) return "<span></span>";
+    const max = Math.max(1, ...series.map((p) => p.jam_km));
+    const t0 = series[0].ts;
+    const span = Math.max(1, series[series.length - 1].ts - t0);
+    const pts = series.map((p) => `${(((p.ts - t0) / span) * 100).toFixed(1)},${(19 - (p.jam_km / max) * 18).toFixed(1)}`).join(" ");
+    return `<svg viewBox="0 0 100 20" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="#ffa94d" stroke-width="1.2" vector-effect="non-scaling-stroke"/></svg>`;
+  }
+
+  function renderTrafficLayer() {
+    layers.traffic.clearLayers();
+    const t = state.traffic;
+    if (!t) return;
+    for (const c of t.cities) {
+      const z = c.evaluation?.ready ? c.evaluation.metrics.jam_km.z : null;
+      const color = z == null ? "#55606f" : z >= 3 ? "#ff4d4f" : z <= -3 ? "#4dabf7" : "#3ecf8e";
+      const [w, so, e, n] = c.bbox;
+      L.rectangle([[so, w], [n, e]], { color, weight: z != null && Math.abs(z) >= 3 ? 2 : 1, fill: false, dashArray: "4 4", interactive: false })
+        .addTo(layers.traffic);
+    }
+    for (const i of t.incidents) {
+      const closure = i.category === "yol kapalı";
+      const color = closure ? "#ff2d55" : i.category === "kaza" ? "#ffd43b" : "#ffa94d";
+      const tip = () =>
+        `<b>${esc(i.category)}</b>${i.road ? " · " + esc(i.road) : ""}<br>${esc(i.from)}${i.to ? " → " + esc(i.to) : ""}` +
+        `<br>${esc(i.description || "")}<br>ilk görülme ${hhmm(i.first_seen)} · ${dur(Date.now() - i.first_seen)}` +
+        (i.delay_s ? ` · gecikme ${Math.round(i.delay_s / 60)} dk` : "");
+      let layer = null;
+      if (i.geometry && i.geometry.length > 1) {
+        layer = L.polyline(i.geometry.map(([lon, lat]) => [lat, lon]), { color, weight: closure ? 4 : 3, opacity: 0.9 });
+      } else if (i.lat != null) {
+        layer = L.circleMarker([i.lat, i.lon], { radius: 4, color, weight: 2, fillOpacity: 0.7 });
+      }
+      if (layer) layer.bindTooltip(tip, { direction: "top" }).addTo(layers.traffic);
+    }
+  }
+
+  function renderTraffic() {
+    const t = state.traffic;
+    if (!t) return;
+    updateAnomalyBadges();
+    renderTrafficLayer();
+    if (ptab.cur !== "traffic") return;
+
+    if (!t.enabled) {
+      $("#trafficCities").innerHTML = `<div class="traffic-off">Trafik analizi için ücretsiz bir <b>TomTom</b> anahtarı gerekiyor.<br>
+        1. <code>developer.tomtom.com</code> adresinde hesap aç ve bir API anahtarı oluştur.<br>
+        2. Proje klasöründeki <code>.env</code> dosyasına <code>TOMTOM_KEY=anahtarın</code> yaz.<br>
+        3. Sunucuyu yeniden başlat. Ölçüm 15 dakikada bir alınır; her saat dilimi için baz çizgisi 8 ölçümden sonra hazır olur.</div>`;
+      $("#anomalyList").innerHTML = "";
+      $("#closureList").innerHTML = "";
+      return;
+    }
+
+    const M = t.metrics;
+    $("#trafficCities").innerHTML = t.cities
+      .map((c) => {
+        const l = c.latest;
+        return `<div class="tcity${ptab.city === c.id ? " sel" : ""}" data-city="${c.id}" title="Son ölçüm: ${c.lastPoll ? hhmm(c.lastPoll) : "—"} · toplam ${c.totalSamples} ölçüm${c.error ? " · HATA: " + esc(c.error) : ""}">
+          <span class="nm">${esc(c.name)}</span>
+          ${zBadge(c)}
+          ${trafficSpark(c.series)}
+          <span class="val">${l ? `${l.jam_km.toFixed(1)}<small> km</small>` : "—"}${l && l.closures ? ` <small style="color:#ff6b81">✕${l.closures}</small>` : ""}</span>
+        </div>`;
+      })
+      .join("");
+
+    const cityName = Object.fromEntries(t.cities.map((c) => [c.id, c.name]));
+    void M;
+    renderAnomalies($("#anomalyList"), ["traffic"], t.cities.some((c) => c.evaluation?.ready));
+
+    const closures = t.incidents.filter((i) => i.category === "yol kapalı").sort((a, b) => b.first_seen - a.first_seen);
+    $("#closureCount").textContent = closures.length ? `(${closures.length})` : "";
+    $("#closureList").innerHTML =
+      closures
+        .slice(0, 12)
+        .map(
+          (i) =>
+            `<li data-lat="${i.lat}" data-lon="${i.lon}" title="${esc(i.description || "")}"><span class="t">${hhmm(i.first_seen)}</span>${esc(
+              cityName[i.city] || i.city
+            )} · ${esc(i.road || i.from || "yol")}${i.to ? " → " + esc(i.to) : ""} · ${dur(Date.now() - i.first_seen)}</li>`
+        )
+        .join("") || `<li class="none">Aktif kapanma yok</li>`;
+
+    renderCityNews();
+  }
+
+  // Seçili şehirle ilgili son haberler — aynı zaman aralığında ne olduğunu görmek için
+  function renderCityNews() {
+    const el = $("#cityNews");
+    const c = state.traffic?.cities.find((x) => x.id === ptab.city);
+    if (!c) {
+      el.innerHTML = "";
+      return;
+    }
+    const items = state.news.filter((n) => n.places.some((p) => p.id === c.id) && Date.now() - n.ts < 12 * 3600_000).slice(0, 8);
+    el.innerHTML = `<div class="mini-title">${esc(c.name)} · son 12 saatteki haberler</div><ul class="news-mini">${
+      items
+        .map((n) => `<li><span class="muted">${hhmm(n.ts)}</span> <a href="${esc(safeUrl(n.url))}" target="_blank" rel="noopener">${esc(n.titleTr || n.title)}</a></li>`)
+        .join("") || '<li class="muted">Bu şehirle eşleşen haber yok</li>'
+    }</ul>`;
+  }
+
+  function selectCity(id) {
+    ptab.city = id;
+    const c = state.traffic?.cities.find((x) => x.id === id);
+    if (c) map.flyToBounds([[c.bbox[1], c.bbox[0]], [c.bbox[3], c.bbox[2]]], { duration: 0.8 });
+    renderTraffic();
+  }
+  $("#trafficCities").addEventListener("click", (e) => {
+    const row = e.target.closest(".tcity");
+    if (row) selectCity(ptab.city === row.dataset.city ? null : row.dataset.city);
+  });
+  $("#anomalyList").addEventListener("click", (e) => {
+    const li = e.target.closest("li[data-city]");
+    if (li) selectCity(li.dataset.city);
+  });
+  $("#closureList").addEventListener("click", (e) => {
+    const li = e.target.closest("li[data-lat]");
+    if (!li || li.dataset.lat === "null") return;
+    map.flyTo([+li.dataset.lat, +li.dataset.lon], 13, { duration: 0.8 });
+    focusPlace({ lat: +li.dataset.lat, lon: +li.dataset.lon });
+  });
+
+  // ---------------- anomali listesi (trafik / hava / deniz) ----------------
+  function renderAnomalies(el, domains, anyReady) {
+    const list = (state.traffic?.anomalies || []).filter((a) => domains.includes(a.domain));
+    el.innerHTML =
+      list
+        .slice(0, 14)
+        .map((a) => {
+          const dir = a.peak_z > 0 ? "▲" : "▼";
+          const icon = a.domain === "air" ? "✈ " : a.domain === "sea" ? "⚓ " : "";
+          const when = new Date(a.started_at).toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit" });
+          return `<li class="${a.active ? "hot" : ""}" data-domain="${a.domain}" data-zone="${esc(a.zone)}" title="Tepe z=${a.peak_z} · normal (medyan) ${a.baseline_median}${a.unit}">
+            <span class="t">${when} ${hhmm(a.started_at)}</span>${icon}${dir} ${esc(a.name)} · ${esc(a.label)} ${a.peak_value}${a.unit} (normal ${a.baseline_median}) · ${
+              a.active ? "sürüyor " + dur(Date.now() - a.started_at) : dur(a.ended_at - a.started_at)
+            }</li>`;
+        })
+        .join("") || `<li class="none">Henüz anomali yok${anyReady ? "" : " (baz çizgileri oluşuyor)"}</li>`;
+  }
+
+  function updateAnomalyBadges() {
+    const act = (state.traffic?.anomalies || []).filter((a) => a.active);
+    const set = (id, n) => {
+      const b = $(id);
+      b.hidden = !n;
+      b.textContent = n;
+    };
+    set("#trafficBadge", act.filter((a) => a.domain === "traffic").length);
+    set("#airseaBadge", act.filter((a) => a.domain !== "traffic").length);
+  }
+
+  // ---------------- gemiler ----------------
+  const SHIP_COLOR = { tanker: "#ff8787", kargo: "#74c0fc", askeri: "#8ce99a", yolcu: "#ffd43b", balıkçı: "#c0a7ff", römorkör: "#e599f7" };
+  function vesselHtml(v, c) {
+    const color = SHIP_COLOR[v.cls] || "#adb5bd";
+    const moving = (v.sog || 0) > 1;
+    const rot = v.heading ?? v.cog ?? 0;
+    const html = moving
+      ? `<svg viewBox="0 0 12 12" width="11" height="11" style="transform:rotate(${rot}deg)"><path d="M6 0 L11 11 L6 8 L1 11 Z" fill="${color}" stroke="#000" stroke-width="0.6"/></svg>`
+      : `<svg viewBox="0 0 10 10" width="8" height="8"><circle cx="5" cy="5" r="4" fill="${color}" stroke="#000" stroke-width="0.8"/></svg>`;
+    return c ? `<div class="nat-ship" style="--c:${c.color}">${html}<span>${c.flag}</span></div>` : html;
+  }
+  function vesselTooltip(v) {
+    const c = countryOf(v.country);
+    return `${c ? `${c.flag} <b>${esc(c.name)}</b> bayraklı · ` : ""}<b>${esc(v.name || "MMSI " + v.mmsi)}</b> · ${esc(v.cls)}${v.length ? ` · ${v.length} m` : ""}<br>${
+      v.sog != null ? `${v.sog.toFixed(1)} kn` : "hız ?"
+    }${v.destination ? ` → ${esc(v.destination)}` : ""}<br><span style="color:#7d8899">son konum ${hhmm(v.seen)} · MMSI ${v.mmsi}</span>`;
+  }
+
+  const vsMarkers = new Map(); // mmsi -> { m, key, target }
+  function renderVesselLayer() {
+    const list = state.marine?.vessels || [];
+    const view = map.getBounds().pad(0.3);
+    const keep = new Set();
+    let shown = 0;
+    for (const v of list) {
+      if (!passSea(v) || !view.contains([v.lat, v.lon])) continue;
+      keep.add(v.mmsi);
+      shown++;
+      const c = countryOf(v.country);
+      const target = c ? layers.natSea : layers.vessels;
+      const key = `${v.cls}|${(v.sog || 0) > 1 ? Math.round((v.heading ?? v.cog ?? 0) / 15) : "s"}|${c ? c.code : ""}`;
+      let e = vsMarkers.get(v.mmsi);
+      if (e && e.target !== target) {
+        e.m.remove();
+        e = null;
+      }
+      const icon = () => L.divIcon({ className: "", html: vesselHtml(v, c), iconSize: [11, 11], iconAnchor: [5, 5] });
+      if (!e) {
+        const m = L.marker([v.lat, v.lon], { icon: icon() });
+        m.bindTooltip(() => vesselTooltip(m._v), { direction: "top" });
+        m.on("click", () => window.open(`https://www.marinetraffic.com/en/ais/details/ships/mmsi:${encodeURIComponent(m._v.mmsi)}`, "_blank", "noopener"));
+        m.addTo(target);
+        e = { m, key, target };
+        vsMarkers.set(v.mmsi, e);
+      } else {
+        e.m.setLatLng([v.lat, v.lon]);
+        if (e.key !== key) {
+          e.m.setIcon(icon());
+          e.key = key;
+        }
+      }
+      e.m._v = v;
+    }
+    for (const [k, e] of vsMarkers) {
+      if (!keep.has(k)) {
+        e.m.remove();
+        vsMarkers.delete(k);
+      }
+    }
+    counts.sea = [shown, list.length];
+    updateFilterInfo();
+  }
+
+  // ---------------- Hava & Deniz paneli ----------------
+  function zoneBadge(z, metric) {
+    const e = z.evaluation;
+    if (!e) return `<span class="zb wait">veri yok</span>`;
+    if (!e.ready) return `<span class="zb wait" title="Bu saat dilimi için en az 8 geçmiş ölçüm gerekiyor">baz ${e.samples}/8</span>`;
+    const zz = e.metrics[metric].z;
+    const cls = zz >= 3 ? "hi" : zz <= -3 ? "lo" : "ok";
+    return `<span class="zb ${cls}" title="Z-skoru (normal/medyan ${e.metrics[metric].median})">z ${zz > 0 ? "+" : ""}${zz.toFixed(1)}</span>`;
+  }
+  function zoneSpark(series, metric, color) {
+    if (!series || series.length < 2) return "<span></span>";
+    const max = Math.max(1, ...series.map((p) => p[metric] || 0));
+    const t0 = series[0].ts;
+    const span = Math.max(1, series[series.length - 1].ts - t0);
+    const pts = series.map((p) => `${(((p.ts - t0) / span) * 100).toFixed(1)},${(19 - ((p[metric] || 0) / max) * 18).toFixed(1)}`).join(" ");
+    return `<svg viewBox="0 0 100 20" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.2" vector-effect="non-scaling-stroke"/></svg>`;
+  }
+
+  function renderAirSea() {
+    renderVesselLayer();
+    updateAnomalyBadges();
+    if (ptab.cur !== "airsea") return;
+
+    const live = {};
+    for (const a of state.aircraft) if (a.zone && !a.onGround) live[a.zone] = (live[a.zone] || 0) + 1;
+    const airRows = (state.air?.zones || [])
+      .map((z) => {
+        const l = z.latest;
+        const noCover = z.totalSamples > 0 && z.series.every((p) => !p.airborne);
+        return `<div class="tcity" data-lat="${z.lat}" data-lon="${z.lon}" title="Son kayıt: ${l ? hhmm(l.ts) : "—"} · ${z.totalSamples} kayıt${noCover ? " · Bu bölgede ADS-B alıcısı yok ya da hava sahası boş" : ""}">
+          <span class="nm">✈ ${esc(z.name)}</span>${zoneBadge(z, "airborne")}${zoneSpark(z.series, "airborne", "#8ce99a")}
+          <span class="val">${live[z.id] ?? 0}${l && l.military ? ` <small style="color:#8ce99a">★${l.military}</small>` : ""}${noCover ? ` <small>kapsam yok</small>` : ""}</span></div>`;
+      })
+      .join("");
+
+    const m = state.marine;
+    let seaRows;
+    if (!m || !m.enabled) {
+      seaRows = `<div class="traffic-off">Gemi trafiği için ücretsiz bir <b>aisstream.io</b> anahtarı gerekiyor:
+        <code>aisstream.io</code> → GitHub ile giriş → API Keys. Anahtarı <code>.env</code> dosyasına <code>AISSTREAM_KEY=...</code> olarak yaz ve sunucuyu yeniden başlat.</div>`;
+    } else {
+      const liveSea = {};
+      for (const v of m.vessels) if (v.zone) liveSea[v.zone] = (liveSea[v.zone] || 0) + 1;
+      seaRows =
+        (m.status.connected ? "" : `<div class="traffic-off">AIS bağlantısı yok: ${esc(m.status.error || "bağlanıyor…")}</div>`) +
+        m.zones
+          .map((z) => {
+            const l = z.latest;
+            const [[s, w], [n, e]] = z.bbox;
+            return `<div class="tcity" data-lat="${(s + n) / 2}" data-lon="${(w + e) / 2}" title="Son kayıt: ${l ? hhmm(l.ts) : "—"} · ${z.totalSamples} kayıt · tanker ${l?.tankers ?? "—"}, kargo ${l?.cargo ?? "—"}">
+            <span class="nm">⚓ ${esc(z.name)}</span>${zoneBadge(z, "vessels")}${zoneSpark(z.series, "vessels", "#74c0fc")}
+            <span class="val">${liveSea[z.id] ?? 0}${l && l.tankers ? ` <small style="color:#ff8787">T${l.tankers}</small>` : ""}</span></div>`;
+          })
+          .join("");
+    }
+    const natRows = (state.countries || [])
+      .map((c) => {
+        const ac = state.aircraft.filter((a) => a.country === c.code && !a.onGround);
+        const sh = (state.marine?.vessels || []).filter((v) => v.country === c.code);
+        const away = ac.filter((a) => !a.zone).length;
+        return `<div class="tcity nat-row" data-country="${c.code}" title="Dünya genelinde havadaki ${c.name} tescilli uçak: ${ac.length} (bölge dışında ${away}) · ${c.name} bayraklı gemi: ${sh.length}">
+          <span class="nm">${c.flag} ${esc(c.name)}</span><span class="zb" style="background:transparent;color:${c.color}">●</span>
+          <span class="muted small">✈ ${ac.length}${away ? ` (${away} dışarıda)` : ""}</span><span class="val">⚓ ${state.marine?.enabled ? sh.length : "—"}</span></div>`;
+      })
+      .join("");
+    $("#airseaZones").innerHTML = `<div class="mini-title">Bölge ülkeleri · dünya geneli (tescil / bayrak)</div>${natRows}<div class="mini-title">Hava sahası · anlık uçak (★ askeri)</div>${airRows}<div class="mini-title">Deniz · anlık gemi (T tanker)</div>${seaRows}`;
+    renderAnomalies($("#airseaAnomalies"), ["air", "sea"], (state.air?.zones || []).some((z) => z.evaluation?.ready));
+  }
+
+  $("#airseaZones").addEventListener("click", (e) => {
+    const nat = e.target.closest(".nat-row");
+    if (nat) {
+      const pts = [...state.aircraft, ...(state.marine?.vessels || [])].filter((x) => x.country === nat.dataset.country).map((x) => [x.lat, x.lon]);
+      if (pts.length) map.flyToBounds(L.latLngBounds(pts).pad(0.1), { duration: 0.8, maxZoom: 7 });
+      return;
+    }
+    const row = e.target.closest(".tcity[data-lat]");
+    if (row) map.flyTo([+row.dataset.lat, +row.dataset.lon], 7, { duration: 0.8 });
+  });
+
   // ---------------- veri ----------------
   const renderAll = throttle(() => {
     renderFeed();
@@ -643,6 +1164,15 @@
     renderPulse();
     renderFlash();
   }, 300);
+
+  function notifyEvents(events) {
+    for (const ev of events || []) {
+      if (ev.kind !== "anomaly") continue;
+      const what = ev.domain === "air" ? "Hava trafiği" : ev.domain === "sea" ? "Deniz trafiği" : "Trafik";
+      beep("news");
+      notify(`${what} anomalisi · ${ev.city}`, `${ev.metric}: ${ev.value} (normal ${ev.median}), z=${ev.z}`);
+    }
+  }
 
   function applyUpdate(u) {
     switch (u.type) {
@@ -662,8 +1192,28 @@
       }
       case "aircraft":
         state.aircraft = u.aircraft;
+        if (u.air) state.air = u.air;
+        if (u.anomalies && state.traffic) state.traffic.anomalies = u.anomalies;
+        if (u.sources) state.sources = u.sources;
+        notifyEvents(u.events);
         renderAircraftLayer();
         renderAircraftList();
+        renderAirSea();
+        break;
+      case "marine":
+        state.marine = u.marine;
+        if (u.anomalies && state.traffic) state.traffic.anomalies = u.anomalies;
+        if (u.sources) state.sources = u.sources;
+        notifyEvents(u.events);
+        renderAirSea();
+        renderSources();
+        break;
+      case "vessels":
+        if (state.marine) {
+          state.marine.vessels = u.vessels;
+          state.marine.status = u.status;
+        }
+        renderAirSea();
         break;
       case "quakes":
         state.quakes = u.quakes;
@@ -674,6 +1224,14 @@
         state.markets = u.markets;
         renderTicker();
         break;
+      case "traffic": {
+        state.traffic = u.traffic;
+        if (u.sources) state.sources = u.sources;
+        notifyEvents(u.events);
+        renderTraffic();
+        renderSources();
+        break;
+      }
       case "sirens": {
         const prev = new Set(state.sirens.active.map((a) => a.id));
         state.sirens = u.sirens;
@@ -700,6 +1258,11 @@
     state.markets = s.markets;
     state.sirens = s.sirens;
     state.sources = s.sources;
+    state.traffic = s.traffic;
+    state.air = s.air;
+    state.marine = s.marine;
+    state.countries = s.countries;
+    syncFilterUi();
     if (!state.tv.length) {
       state.tv = s.tv;
       renderTvSelect();
@@ -713,6 +1276,8 @@
     renderSirenList();
     renderSources();
     renderAll();
+    setPulseTab(ptab.cur);
+    renderAirSea();
   }
 
   function connect() {

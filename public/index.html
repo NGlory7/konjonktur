@@ -52,9 +52,12 @@
         <span><i class="dot sev2"></i>askeri/insani</span>
         <span><i class="dot sev1"></i>diplomasi/ekonomi</span>
         <span><i class="dot sev0"></i>genel</span>
-        <span>✈ askeri uçak</span>
+        <span>✈ uçak (yeşil: askeri)</span>
+        <span>▲ gemi</span>
         <span><i class="ring quake"></i>deprem</span>
         <span><i class="dot siren"></i>siren</span>
+        <span><i class="bar-ico closure"></i>yol kapalı</span>
+        <span><i class="bar-ico jam"></i>ağır sıkışıklık</span>
       </div>
     </section>
 
@@ -88,9 +91,34 @@
 
     <section class="panel pulse-panel">
       <div class="panel-head">
-        <h2>Bölge nabzı <span class="muted small">son 6 saat · haber sayısı</span></h2>
+        <div class="tabs" id="pulseTabs">
+          <button data-ptab="pulse" class="on">Bölge nabzı</button>
+          <button data-ptab="traffic">Trafik <span id="trafficBadge" class="badge" hidden></span></button>
+          <button data-ptab="airsea">Hava &amp; Deniz <span id="airseaBadge" class="badge" hidden></span></button>
+        </div>
+        <span id="pulseHint" class="muted small">son 6 saat · haber sayısı</span>
       </div>
-      <div class="pulse-body">
+      <div id="trafficBody" class="traffic-body" hidden>
+        <div id="trafficCities" class="traffic-cities"></div>
+        <div class="traffic-side">
+          <div class="mini-title">Anomaliler · 7 gün</div>
+          <ul id="anomalyList" class="mini-list"></ul>
+          <div class="mini-title">Aktif yol kapanmaları <span id="closureCount" class="muted"></span></div>
+          <ul id="closureList" class="mini-list"></ul>
+          <div id="cityNews"></div>
+        </div>
+      </div>
+      <div id="airseaBody" class="traffic-body" hidden>
+        <div id="airseaZones" class="traffic-cities"></div>
+        <div class="traffic-side">
+          <div class="mini-title">Hava &amp; deniz anomalileri · 7 gün</div>
+          <ul id="airseaAnomalies" class="mini-list"></ul>
+          <div class="mini-title" style="margin-top:6px">Nasıl okunur</div>
+          <div class="muted small">Her bölgenin uçak/gemi sayısı 5 dakikada bir kaydedilir ve aynı yerel saatteki geçmişle karşılaştırılır.
+            ▼ negatif anomali: hava sahası ya da deniz trafiği beklenenden çok boş (ör. kapanma). ▲ pozitif: olağan dışı yoğunluk.</div>
+        </div>
+      </div>
+      <div class="pulse-body" id="pulseBody">
         <div id="countryBars" class="country-bars"></div>
         <div class="pulse-side">
           <div class="mini-title">Orta Doğu haber hacmi · 24 saat</div>
