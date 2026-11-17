@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Konjonktür</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23e8b04b' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23e8b04b'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span id="liveDot" class="live-dot" title="Sunucu bağlantısı"></span>
+      <span class="brand-name">KONJONKTÜR</span>
+      <span class="brand-sub">dünya · orta doğu · canlı</span>
+    </div>
+    <div id="clocks" class="clocks"></div>
+    <div class="actions">
+      <span id="lastUpdate" class="muted small"></span>
+      <button id="btnSound" class="icon-btn" title="Kritik haber / siren sesi">🔇</button>
+      <button id="btnNotify" class="icon-btn" title="Masaüstü bildirimleri">🔕</button>
+      <button id="btnWake" class="icon-btn" title="Ekranı açık tut">☀</button>
+      <button id="btnFull" class="icon-btn" title="Tam ekran (F)">⛶</button>
+    </div>
+  </header>
+
+  <div id="ticker" class="ticker"></div>
+
+  <div id="flash" class="flash" hidden></div>
+
+  <main class="grid">
+    <section class="panel map-panel">
+      <div class="panel-head">
+        <h2>Durum haritası</h2>
+        <div class="seg" id="mapView">
+          <button data-view="me" class="on">Orta Doğu</button>
+          <button data-view="levant">Levant</button>
+          <button data-view="gulf">Körfez</button>
+          <button data-view="world">Dünya</button>
+        </div>
+        <div class="seg" id="hoursSel" title="Haritadaki haber yoğunluğu zaman penceresi">
+          <button data-h="3">3s</button>
+          <button data-h="6" class="on">6s</button>
+          <button data-h="12">12s</button>
+          <button data-h="24">24s</button>
+        </div>
+      </div>
+      <div id="map"></div>
+      <div class="legend">
+        <span><i class="dot sev3"></i>saldırı/nükleer</span>
+        <span><i class="dot sev2"></i>askeri/insani</span>
+        <span><i class="dot sev1"></i>diplomasi/ekonomi</span>
+        <span><i class="dot sev0"></i>genel</span>
+        <span>✈ askeri uçak</span>
+        <span><i class="ring quake"></i>deprem</span>
+        <span><i class="dot siren"></i>siren</span>
+      </div>
+    </section>
+
+    <section class="panel feed-panel">
+      <div class="panel-head">
+        <div class="tabs" id="tabs">
+          <button data-tab="me" class="on">Orta Doğu</button>
+          <button data-tab="all">Tümü</button>
+          <button data-tab="world">Dünya</button>
+          <button data-tab="tr">Türkiye</button>
+          <button data-tab="tg">Telegram</button>
+        </div>
+      </div>
+      <div class="feed-tools">
+        <input id="search" type="search" placeholder="Ara: Gazze, Hürmüz, ateşkes…" />
+        <label class="chk"><input type="checkbox" id="critOnly" /> Önemli</label>
+        <label class="chk"><input type="checkbox" id="showOrig" /> Orijinal</label>
+        <span id="feedCount" class="muted small"></span>
+      </div>
+      <div id="placeFilter" class="place-filter" hidden></div>
+      <ol id="feed" class="feed"></ol>
+    </section>
+
+    <section class="panel tv-panel">
+      <div class="panel-head">
+        <h2>Canlı yayın</h2>
+        <select id="tvSel"></select>
+      </div>
+      <div class="tv-wrap"><iframe id="tv" title="Canlı yayın" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>
+    </section>
+
+    <section class="panel pulse-panel">
+      <div class="panel-head">
+        <h2>Bölge nabzı <span class="muted small">son 6 saat · haber sayısı</span></h2>
+      </div>
+      <div class="pulse-body">
+        <div id="countryBars" class="country-bars"></div>
+        <div class="pulse-side">
+          <div class="mini-title">Orta Doğu haber hacmi · 24 saat</div>
+          <div id="volume" class="volume"></div>
+          <div class="mini-title">İsrail siren olayları</div>
+          <ul id="sirenList" class="mini-list"></ul>
+          <div class="mini-title">Bölgedeki askeri uçaklar <span id="acCount" class="muted"></span></div>
+          <ul id="acList" class="mini-list"></ul>
+          <div class="mini-title">Depremler · 24 saat</div>
+          <ul id="quakeList" class="mini-list"></ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer id="sources" class="sources"></footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
