@@ -14,6 +14,19 @@ trafik / hava / deniz anomali analizi**.
 - **Anomali kapsamı:** baz çizgisi ve anomali tespiti yalnızca İsrail, İran ve Körfez bölgelerinde yapılır.
   Diğer veriler (Türkiye dahil) haritada gösterilir ama anomali üretmez.
 
+## Haber kümeleme
+
+Aynı olayı anlatan başlıklar (farklı kaynak ve dillerden) tek kartta toplanır; kartın "+N · K kaynak" çipine tıklayınca
+diğer başlıklar açılır. Yabancı başlıklar zaten Türkçeye çevrildiği için karşılaştırma Türkçe metin üzerinden yapılır:
+kelimelerin ilk 5 harfi (kaba kök) ve Jaccard benzerliği; ortak yer adı varsa eşik 0,34, yoksa 0,5; en az 3 ortak kök
+ve 8 saatlik pencere (`src/cluster.js`). Akıştaki "Kümele" kutusuyla kapatılabilir. Sezgisel bir yöntemdir: aynı
+yerdeki farklı olaylar bazen birleşebilir, aynı olayın çok farklı ifade edilen başlıkları ayrı kalabilir.
+
+## Siren uyarıları
+
+Tehdit kodlarının Türkçe karşılıkları Tzeva Adom'un kendi sitesindeki tabloyla doğrulandı (0 kırmızı alarm/roket-füze,
+3 deprem, 5 düşman hava aracı sızması, 9 tatbikat — tatbikatlar gösterilmez).
+
 ## Hava ve deniz trafiği
 
 - **Hava (adsb.fi, anahtarsız):** İsrail, İran (3 bölge), Körfez batı/doğu ve Suudi Arabistan bölgeleri dakikada bir

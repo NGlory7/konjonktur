@@ -86,18 +86,19 @@ async function fetchMarkets(list) {
 
 // ---------------- İsrail siren uyarıları (Tzeva Adom) ----------------
 
-// Tzeva Adom tehdit kodları
+// Tzeva Adom tehdit kodları — kaynak: tzevaadom.co.il sitesindeki THREATS_TITLES tablosu
+// (tzofar-site/static/js/app.js, 17.11.2026'da doğrulandı). 9 = tatbikat; bunlar zaten filtreleniyor.
 const THREATS = {
-  0: "Roket / füze",
-  1: "Tehlikeli madde",
-  2: "Terörist sızması",
-  3: "Deprem",
-  4: "Tsunami",
-  5: "Düşman hava aracı (İHA)",
-  6: "Radyolojik olay",
-  7: "Konvansiyonel olmayan füze",
-  8: "Genel uyarı",
-  9: "Tatbikat"
+  0: "Kırmızı alarm (roket / füze)", // "Red Alert"
+  1: "Tehlikeli madde olayı", // "Hazardous Materials Incident"
+  2: "Terörist sızma şüphesi", // "Fear of Terrorists infiltration"
+  3: "Deprem", // "Earthquake"
+  4: "Tsunami şüphesi", // "Fear of a tsunami"
+  5: "Düşman hava aracı sızması", // "Hostile aircraft intrusion"
+  6: "Radyolojik olay şüphesi", // "Fear of a Radiological incident"
+  7: "Konvansiyonel olmayan füze", // "Non-conventional missile"
+  8: "Uyarı", // "Alert"
+  9: "İç Cephe Komutanlığı tatbikatı" // "Home Front Command Drill"
 };
 
 let cityIndex = null;

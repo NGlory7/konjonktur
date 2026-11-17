@@ -330,3 +330,9 @@ select {
 .flt-chips { display: flex; flex-wrap: wrap; gap: 3px; }
 .flt-chips button { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; cursor: pointer; font-size: 13px; opacity: 0.55; }
 .flt-chips button.on { opacity: 1; border-color: var(--accent); }
+
+/* ---------- haber kümeleri ---------- */
+.chip.cluster { cursor: pointer; color: var(--accent); border-color: #5c4a22; }
+.chip.cluster:hover { background: #2a2410; }
+.feed li.child { padding-left: 18px; background: #0f141b; }
+.feed li.child .title { font-weight: 400; font-size: 12px; }

@@ -35,6 +35,7 @@ const SEA_METRICS = {
 };
 const { findPlaces } = require("./gazetteer");
 const { classify } = require("./classify");
+const { Clusterer } = require("./cluster");
 const { dedupeKey, mapLimit } = { ...require("./text"), ...require("./net") };
 
 class Hub extends EventEmitter {
@@ -42,6 +43,7 @@ class Hub extends EventEmitter {
     super();
     this.setMaxListeners(100);
     this.news = new Map(); // id -> item
+    this.clusterer = new Clusterer(); // aynı olayı anlatan haberleri gruplar
     this.dedupe = new Map(); // başlık anahtarı -> id
     this.aircraft = [];
     this.quakes = [];
@@ -101,7 +103,11 @@ class Hub extends EventEmitter {
     if (!fresh.length) return [];
 
     const enriched = await mapLimit(fresh, 5, (r) => this.enrich(r));
-    for (const item of enriched) this.news.set(item.id, item);
+    enriched.sort((a, b) => a.ts - b.ts);
+    for (const item of enriched) {
+      item.cluster = this.clusterer.assign(item);
+      this.news.set(item.id, item);
+    }
     this.prune();
     return enriched;
   }

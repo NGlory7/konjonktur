@@ -74,6 +74,7 @@
     tab: store.get("tab", "me"),
     critOnly: store.get("critOnly", false),
     showOrig: store.get("showOrig", false),
+    cluster: store.get("cluster", true),
     hours: store.get("hours", 6),
     view: store.get("view", "me"),
     sound: store.get("sound", false),
@@ -495,7 +496,19 @@
     return true;
   }
 
-  function itemHtml(n, isNew) {
+  // Kümelenmiş haberler: aynı olayı anlatan başlıklardan yalnızca en yenisi gösterilir,
+  // diğerleri "+N kaynak" çipine tıklanınca açılır.
+  const expanded = new Set();
+  function clusterChip(n, members) {
+    if (!members || members.length < 2) return "";
+    const others = members.length - 1;
+    const sources = new Set(members.map((m) => m.source)).size;
+    const langs = [...new Set(members.map((m) => m.lang))].join(", ");
+    const open = expanded.has(n.cluster);
+    return `<span class="chip cluster" data-cluster="${esc(n.cluster)}" title="Aynı olayı anlatan ${others} başlık daha (${sources} kaynak; diller: ${esc(langs)})">${open ? "▾" : "▸"} +${others} · ${sources} kaynak</span>`;
+  }
+
+  function itemHtml(n, isNew, members, child) {
     const title = n.titleTr || n.title;
     const showOrig = ui.showOrig && n.titleTr && n.titleTr !== n.title;
     const rtl = /^(ar|fa|he)$/.test(n.lang);
@@ -503,7 +516,7 @@
       .map((p) => `<span class="chip place" data-place="${esc(p.id)}" data-lat="${p.lat}" data-lon="${p.lon}">${esc(p.name)}</span>`)
       .join("");
     const topics = n.topics.slice(0, 2).map((t) => `<span class="chip topic">${esc(TOPIC_LABEL[t] || t)}</span>`).join("");
-    return `<li class="s${n.severity}${isNew ? " new" : ""}" data-id="${esc(n.id)}">
+    return `<li class="s${n.severity}${isNew ? " new" : ""}${child ? " child" : ""}" data-id="${esc(n.id)}">
       <span class="bar"></span>
       <span class="time"><b>${hhmm(n.ts)}</b>${ago(n.ts)}</span>
       <div>
@@ -513,6 +526,7 @@
           <span class="chip ${n.kind === "telegram" ? "tg" : ""}">${n.kind === "telegram" ? "TG · " : ""}${esc(n.source)}</span>
           ${n.lang !== "tr" ? `<span class="chip lang" title="Orijinal dil — otomatik çeviri">${esc(n.lang)}→tr</span>` : ""}
           ${n.dupes ? `<span class="chip dup" title="Aynı başlık başka akışlarda da geçti">+${n.dupes}</span>` : ""}
+          ${child ? "" : clusterChip(n, members)}
           ${topics}${places}
         </div>
       </div>
@@ -521,9 +535,27 @@
 
   let renderedIds = new Set();
   function renderFeed() {
-    const list = state.news.filter((n) => matchesTab(n) && matchesFilters(n));
+    const all = state.news.filter((n) => matchesTab(n) && matchesFilters(n));
+    // Kümele: her kümeden yalnızca en yeni haber listede kalır (liste zaten yeniden eskiye sıralı)
+    const groups = new Map();
+    for (const n of all) {
+      const k = n.cluster || n.id;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(n);
+    }
+    const list = ui.cluster ? [...groups.values()].map((g) => g[0]) : all;
     const shown = list.slice(0, ui.limit);
-    const html = shown.map((n) => itemHtml(n, renderedIds.size > 0 && !renderedIds.has(n.id) && Date.now() - n.ts < 3600_000)).join("");
+    const isNew = (n) => renderedIds.size > 0 && !renderedIds.has(n.id) && Date.now() - n.ts < 3600_000;
+    const html = shown
+      .map((n) => {
+        const members = ui.cluster ? groups.get(n.cluster || n.id) : null;
+        let out = itemHtml(n, isNew(n), members);
+        if (members && members.length > 1 && expanded.has(n.cluster)) {
+          out += members.slice(1).map((m) => itemHtml(m, isNew(m), null, true)).join("");
+        }
+        return out;
+      })
+      .join("");
     const el = $("#feed");
     const scroll = el.scrollTop;
     if (!html) {
@@ -534,7 +566,7 @@
     }
     el.scrollTop = scroll;
     renderedIds = new Set(state.news.map((n) => n.id));
-    $("#feedCount").textContent = `${list.length} haber`;
+    $("#feedCount").textContent = ui.cluster && list.length !== all.length ? `${list.length} olay · ${all.length} haber` : `${all.length} haber`;
 
     // sekme sayaçları (son 6 saat)
     const since = Date.now() - 6 * 3600_000;
@@ -553,6 +585,14 @@
   }
 
   $("#feed").addEventListener("click", (e) => {
+    const cl = e.target.closest(".chip.cluster");
+    if (cl) {
+      const k = cl.dataset.cluster;
+      if (expanded.has(k)) expanded.delete(k);
+      else expanded.add(k);
+      renderFeed();
+      return;
+    }
     const chip = e.target.closest(".chip.place");
     if (chip) {
       setPlaceFilter({ id: chip.dataset.place, name: chip.textContent });
@@ -1326,6 +1366,13 @@
   critEl.addEventListener("change", () => {
     ui.critOnly = critEl.checked;
     store.set("critOnly", ui.critOnly);
+    renderFeed();
+  });
+  const clusterEl = $("#clusterNews");
+  clusterEl.checked = ui.cluster;
+  clusterEl.addEventListener("change", () => {
+    ui.cluster = clusterEl.checked;
+    store.set("cluster", ui.cluster);
     renderFeed();
   });
   const origEl = $("#showOrig");
