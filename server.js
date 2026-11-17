@@ -1,10 +1,35 @@
 /**
  * KONJONKTÜR — canlı dünya & Orta Doğu durum ekranı
- * Sıfır bağımlılık: yalnızca Node.js (v18+) yerleşik modülleri.
+ * Sıfır bağımlılık: yalnızca Node.js (v22.5+) yerleşik modülleri.
  */
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+
+// Yan ekranda günlerce açık kalacak: tek bir kaynaktaki beklenmedik hata sunucuyu düşürmesin.
+// Hatalar ve kapanışlar data/server.log dosyasına yazılır.
+const LOG = path.join(__dirname, "data", "server.log");
+function logLine(msg) {
+  try {
+    fs.mkdirSync(path.dirname(LOG), { recursive: true });
+    fs.appendFileSync(LOG, `${new Date().toISOString()} ${msg}\n`);
+  } catch (_) {}
+}
+process.on("uncaughtException", (err) => {
+  console.error("[beklenmeyen hata]", err);
+  logLine(`uncaughtException ${err && err.stack ? err.stack : err}`);
+});
+process.on("unhandledRejection", (err) => {
+  console.error("[yakalanmamış promise]", err);
+  logLine(`unhandledRejection ${err && err.stack ? err.stack : err}`);
+});
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"]) {
+  process.on(sig, () => {
+    logLine(`kapanış sinyali: ${sig}`);
+    process.exit(0);
+  });
+}
+process.on("exit", (code) => logLine(`çıkış kodu ${code}`));
 const config = require("./config");
 const hub = require("./src/hub");
 
