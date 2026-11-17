@@ -1,0 +1,19 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Söz dizimi kontrolü
+        run: |
+          for f in server.js config.js src/*.js src/sources/*.js public/app.js; do node --check "$f"; done
+      - name: Birim testleri
+        run: npm test

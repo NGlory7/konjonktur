@@ -1,5 +1,7 @@
 # KONJONKTÜR
 
+[![test](https://github.com/NGlory7/konjonktur/actions/workflows/test.yml/badge.svg)](https://github.com/NGlory7/konjonktur/actions/workflows/test.yml)
+
 Yan ekranda sürekli açık durmak için tasarlanmış, **canlı dünya ve Orta Doğu durum ekranı**.
 Tek pencerede: çok dilli haber akışı (otomatik Türkçe çeviri), haber yoğunluk haritası, İsrail siren uyarıları,
 hava ve deniz trafiği, depremler, piyasalar, canlı haber kanalı ve **İsrail, İran ve Körfez ülkeleri için
